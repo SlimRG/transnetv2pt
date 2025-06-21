@@ -57,20 +57,6 @@ scenes = predict_video(str(target), device='cuda', show_progressbar=True)
 print(scenes)
 ```
 
-### CLI Script
-
-A helper script is provided to process entire directories and extract key frames:
-
-```bash
-python scripts/process_videos.py --input_dir "/path/to/videos" --output_dir "/path/to/output/images"
-```
-
-Options:
-
-* `--input_dir`: Directory containing `.mkv` or `.mp4` videos.
-* `--output_dir`: Directory to save extracted scene frames.
-* `--prefix`: Filename prefix for saved frames (default: `GOOD`).
-
 ## Examples
 
 #### Extract Key Frames
