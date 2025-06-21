@@ -41,7 +41,10 @@ This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/Tra
    ```bash
    pip install -r requirements.txt
    ```
-3. Download pretrained weights (`transnetv2-pytorch-weights.pth`) and place them in the repository root.
+3. Install package:
+   ```bash
+   python setup.py install
+   ``` 
 
 ## Usage
 
