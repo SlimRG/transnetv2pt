@@ -44,6 +44,9 @@ This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/Tra
 3. Install PyTorch:
    
    https://pytorch.org/get-started/locally/
+4. Build and Install OpenCV CUDA
+
+   https://machinelearningprojects.net/build-opencv-with-cuda-and-cudnn/
 5. Install package:
    ```bash
    python setup.py install
