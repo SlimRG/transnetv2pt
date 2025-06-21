@@ -1,30 +1,69 @@
-# https://github.com/soCzech/TransNetV2
-import torch
-from .transnetv2_pytorch import TransNetV2
-import ffmpeg
-import numpy as np
 import os
+import cv2
+import torch
+import numpy as np
+import logging
+from tqdm import tqdm
+from .transnetv2_pytorch import TransNetV2
 
+# Initialize logger
+logger = logging.getLogger(__name__)
 
+# Initialize TransNetV2 model
 model = TransNetV2()
 state_dict = torch.load(
-    f"{os.path.dirname(os.path.abspath(__file__))}/transnetv2-pytorch-weights.pth")
+    f"{os.path.dirname(os.path.abspath(__file__))}/transnetv2-pytorch-weights.pth"
+)
 model.load_state_dict(state_dict)
 model.eval()
 
+def extract_frames_with_opencv(video_path: str, target_height: int = 27, target_width: int = 48, show_progressbar: bool = False):
+    """
+    Extracts frames from a video using OpenCV with optional CUDA support and progress tracking.
+    """
+    logger.info(f"Opening video: {video_path}")
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.error(f"Failed to open video: {video_path}")
+        raise ValueError(f"Failed to open video: {video_path}")
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames = []
+
+    # Initialize progress bar
+    progress_bar = tqdm(total=total_frames, desc="Extracting frames", unit="frame") if show_progressbar else None
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        # Convert frame to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Resize frame
+        frame_resized = cv2.resize(frame_rgb, (target_width, target_height))
+        frames.append(frame_resized)
+        if progress_bar:
+            progress_bar.update(1)
+
+    cap.release()
+    if progress_bar:
+        progress_bar.close()
+    logger.info(f"Extracted {len(frames)} frames")
+    return np.array(frames)
 
 def input_iterator(frames):
-    # return windows of size 100 where the first/last 25 frames are from the previous/next batch
-    # the first and last window must be padded by copies of the first and last frame of the video
+    """
+    Generator that yields batches of 100 frames, with padding at the beginning and end.
+    """
     no_padded_frames_start = 25
-    no_padded_frames_end = 25 + 50 - \
-        (len(frames) % 50 if len(frames) % 50 != 0 else 50)  # 25 - 74
+    no_padded_frames_end = 25 + 50 - (len(frames) % 50 if len(frames) % 50 != 0 else 50)
 
     start_frame = np.expand_dims(frames[0], 0)
     end_frame = np.expand_dims(frames[-1], 0)
     padded_inputs = np.concatenate(
         [start_frame] * no_padded_frames_start +
-        [frames] + [end_frame] * no_padded_frames_end, 0
+        [frames] +
+        [end_frame] * no_padded_frames_end, 0
     )
 
     ptr = 0
@@ -33,8 +72,10 @@ def input_iterator(frames):
         ptr += 50
         yield out[np.newaxis]
 
-
 def predictions_to_scenes(predictions: np.ndarray, threshold: float = 0.5):
+    """
+    Converts model predictions to scene boundaries based on a threshold.
+    """
     predictions = (predictions > threshold).astype(np.uint8)
 
     scenes = []
@@ -48,49 +89,42 @@ def predictions_to_scenes(predictions: np.ndarray, threshold: float = 0.5):
     if t == 0:
         scenes.append([start, i])
 
-    # just fix if all predictions are 1
     if len(scenes) == 0:
         return np.array([[0, len(predictions) - 1]], dtype=np.int32)
 
     return np.array(scenes, dtype=np.int32)
 
-
 def predict_raw(model, video, device=torch.device('cuda:0')):
+    """
+    Performs inference on the video using the TransNetV2 model.
+    """
     model.to(device)
     with torch.no_grad():
         predictions = []
         for inp in input_iterator(video):
-            video_tensor = torch.from_numpy(inp)
-            # shape: batch dim x video frames x frame height x frame width x RGB (not BGR) channels
-            video_tensor = video_tensor.to(device)
-
+            video_tensor = torch.from_numpy(inp).to(device)
             single_frame_pred, all_frame_pred = model(video_tensor)
-
             single_frame_pred = torch.sigmoid(single_frame_pred).cpu().numpy()
-            all_frame_pred = torch.sigmoid(
-                all_frame_pred["many_hot"]).cpu().numpy()
+            all_frame_pred = torch.sigmoid(all_frame_pred["many_hot"]).cpu().numpy()
             predictions.append(
                 (single_frame_pred[0, 25:75, 0], all_frame_pred[0, 25:75, 0]))
-            print("\r[TransNetV2] Processing video frames {}/{}".format(
-                min(len(predictions) * 50, len(video)), len(video)
-            ), end="")
-        single_frame_pred = np.concatenate(
-            [single_ for single_, all_ in predictions])
-        all_frames_pred = np.concatenate(
-            [all_ for single_, all_ in predictions])
+        single_frame_pred = np.concatenate([single_ for single_, _ in predictions])
+        return video.shape[0], single_frame_pred
 
-        return video.shape[0], single_frame_pred[:len(video)], all_frames_pred[:len(video)]
-
-
-def predict_video(filename_or_video):
-    if isinstance(filename_or_video, str):
-        video_stream, err = ffmpeg.input(filename_or_video).output(
-            "pipe:", format="rawvideo", pix_fmt="rgb24", s="48x27"
-        ).run(capture_stdout=True, capture_stderr=True)
-        video = np.frombuffer(video_stream, np.uint8).reshape([-1, 27, 48, 3])
+def predict_video(video_path: str, device: str = 'cuda', show_progressbar: bool = False):
+    """
+    Detects shot boundaries in a video file using the TransNetV2 model.
+    """
+    # Determine device
+    if device == 'cuda' and torch.cuda.is_available():
+        device = torch.device('cuda')
+        logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
     else:
-        assert filename_or_video.shape[1] == 27 and filename_or_video.shape[2] == 48 and filename_or_video.shape[3] == 3
-        video = filename_or_video
-    _, single_frame_pred, _ = predict_raw(model, video)
+        device = torch.device('cpu')
+        logger.info("Using CPU")
+
+    frames = extract_frames_with_opencv(video_path, show_progressbar=show_progressbar)
+    _, single_frame_pred = predict_raw(model, frames, device=device)
     scenes = predictions_to_scenes(single_frame_pred)
+    logger.info(f"Detected {len(scenes)} scenes")
     return scenes
