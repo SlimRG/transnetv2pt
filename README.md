@@ -36,12 +36,15 @@ This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/Tra
    ```bash
    git clone https://github.com/yourusername/TransNetV2.git
    ```
-2. Install dependencies (tested on Python 3.12):
+3. Install dependencies (tested on Python 3.12):
 
    ```bash
    pip install -r requirements.txt
    ```
-3. Install package:
+3. Install PyTorch:
+   
+   https://pytorch.org/get-started/locally/
+5. Install package:
    ```bash
    python setup.py install
    ``` 
