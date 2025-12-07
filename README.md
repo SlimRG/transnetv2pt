@@ -2,7 +2,6 @@
 
 This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/TransNetV2) that introduces several enhancements:
 
-* **OpenCV CUDA Integration**: Accelerated frame extraction leveraging NVIDIA CUDA.
 * **PyTorch Backend**: Native PyTorch model loading and inference for easier integration and extension.
 * **Logging**: Structured logging via Python `logging` module for better observability.
 * **Progress Bar**: Real-time progress feedback using `tqdm` during frame extraction and scene detection.
