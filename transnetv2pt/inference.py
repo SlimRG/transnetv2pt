@@ -1,55 +1,96 @@
 import os
-import cv2
+import av
 import torch
 import numpy as np
 import logging
 from tqdm import tqdm
 from .transnetv2_pytorch import TransNetV2
 
-# Initialize logger
-logger = logging.getLogger(__name__)
-
-# Initialize TransNetV2 model
-model = TransNetV2()
-state_dict = torch.load(
-    f"{os.path.dirname(os.path.abspath(__file__))}/transnetv2-pytorch-weights.pth"
-)
-model.load_state_dict(state_dict)
-model.eval()
-
-def extract_frames_with_opencv(video_path: str, target_height: int = 27, target_width: int = 48, show_progressbar: bool = False):
+def init_model(device: torch.device | None = None):
+    # Init logger
+    logger = logging.getLOGGER(__name__)
+    
+    # Set device
+    if (device is None) and torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    
+    # Init model
+    model = TransNetV2()
+    state_dict = torch.load(
+        f"{os.path.dirname(os.path.abspath(__file__))}/transnetv2-pytorch-weights.pth"
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+    model.to(device)
+     
+    # If CUDA - optimize
+    if device == 'cuda':
+        model = torch.compile(model, mode="reduce-overhead")   
+               
+    # Return model
+    return {
+        "LOGGER": logger,
+        "MODEL": model,
+        "DEVICE": device,
+    }
+        
+def extract_frames_with_opencv(
+        video_path: str,
+        logger,
+        target_height: int = 27,
+        target_width: int = 48,
+        show_progressbar: bool = False
+):
     """
-    Extracts frames from a video using OpenCV with optional CUDA support and progress tracking.
+    Extracts frames from a video with progress tracking.
     """
-    logger.info(f"Opening video: {video_path}")
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        logger.error(f"Failed to open video: {video_path}")
-        raise ValueError(f"Failed to open video: {video_path}")
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    logger.info(f"Opening video: {video_path}") 
     frames = []
+    try:
+        # Try to open video
+        with av.open(video_path) as container:
+            # If can not open
+            if not container.streams.video:
+                raise ValueError(f"No video stream found: {video_path}")
+            
+            # Make stream
+            stream = container.streams.video[0]
+            stream.thread_type = "AUTO" 
+            
+            # Informing
+            total_frames = stream.frames if stream.frames and stream.frames > 0 else None
+            progress_bar = (
+                tqdm(total=total_frames, desc="Extracting frames", unit="frame")
+                if show_progressbar
+                else None
+            )   
+            
+            # Decode frames
+            for frame in container.decode(video=0):
+                # Resize + rgb24
+                frame = frame.reformat(
+                    width=target_width,
+                    height=target_height,
+                    format="rgb24",
+                )
 
-    # Initialize progress bar
-    progress_bar = tqdm(total=total_frames, desc="Extracting frames", unit="frame") if show_progressbar else None
+                arr = frame.to_ndarray()
+                frames.append(arr)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        # Convert frame to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # Resize frame
-        frame_resized = cv2.resize(frame_rgb, (target_width, target_height))
-        frames.append(frame_resized)
-        if progress_bar:
-            progress_bar.update(1)
+                if progress_bar:
+                    progress_bar.update(1)
 
-    cap.release()
-    if progress_bar:
-        progress_bar.close()
+            if progress_bar:
+                progress_bar.close()
+         
+    except av.AVError as e:
+        logger.error(f"Failed to open/decode video: {video_path}. PyAV error: {e}")
+        raise
+    
     logger.info(f"Extracted {len(frames)} frames")
-    return np.array(frames)
+    return np.asarray(frames, dtype=np.uint8)    
 
 def input_iterator(frames):
     """
@@ -94,37 +135,37 @@ def predictions_to_scenes(predictions: np.ndarray, threshold: float = 0.5):
 
     return np.array(scenes, dtype=np.int32)
 
-def predict_raw(model, video, device=torch.device('cuda:0')):
+def predict_raw(model, video, device):
     """
-    Performs inference on the video using the TransNetV2 model.
-    """
-    model.to(device)
-    with torch.no_grad():
+    Performs inference on the video using the TransNetV2 MODEL.
+    """  
+    with torch.inference_mode():
         predictions = []
         for inp in input_iterator(video):
             video_tensor = torch.from_numpy(inp).to(device)
             single_frame_pred, all_frame_pred = model(video_tensor)
             single_frame_pred = torch.sigmoid(single_frame_pred).cpu().numpy()
             all_frame_pred = torch.sigmoid(all_frame_pred["many_hot"]).cpu().numpy()
-            predictions.append(
-                (single_frame_pred[0, 25:75, 0], all_frame_pred[0, 25:75, 0]))
+            predictions.append((single_frame_pred[0, 25:75, 0], all_frame_pred[0, 25:75, 0]))
         single_frame_pred = np.concatenate([single_ for single_, _ in predictions])
         return video.shape[0], single_frame_pred
 
-def predict_video(video_path: str, device: str = 'cuda', show_progressbar: bool = False):
+def predict_video(video_path: str, model_container, show_progressbar: bool = False):
     """
-    Detects shot boundaries in a video file using the TransNetV2 model.
+    Detects shot boundaries in a video file using the TransNetV2 MODEL.
     """
-    # Determine device
-    if device == 'cuda' and torch.cuda.is_available():
-        device = torch.device('cuda')
-        logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
-    else:
-        device = torch.device('cpu')
-        logger.info("Using CPU")
-
-    frames = extract_frames_with_opencv(video_path, show_progressbar=show_progressbar)
+    # Get settings
+    logger = model_container["LOGGER"]
+    model = model_container["MODEL"]
+    device = model_container["DEVICE"]
+    
+    # Extract frames
+    frames = extract_frames_with_opencv(video_path, logger, show_progressbar=show_progressbar)
+    
+    # Predict
     _, single_frame_pred = predict_raw(model, frames, device=device)
+    
+    # Get scenes
     scenes = predictions_to_scenes(single_frame_pred)
     logger.info(f"Detected {len(scenes)} scenes")
     return scenes

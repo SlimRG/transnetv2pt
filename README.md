@@ -23,7 +23,7 @@ This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/Tra
 
 ## Features
 
-* **Fast Frame Extraction**: Utilizes OpenCV with CUDA support, if available, falling back to CPU otherwise.
+* **Fast Frame Extraction**: Utilizes PyAV with CUDA support, if available, falling back to CPU otherwise.
 * **PyTorch Model**: Loads TransNetV2 weights via PyTorch, supports GPU/CPU inference.
 * **Scene Boundary Detection**: Produces accurate shot boundary detection with configurable thresholds.
 * **Logging & Monitoring**: INFO-level logs for key steps and errors.
@@ -42,12 +42,9 @@ This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/Tra
    pip install -r requirements.txt
    ```
 3. Install PyTorch:
-   
-   https://pytorch.org/get-started/locally/
-4. Build and Install OpenCV CUDA
+   https://pytorch.org/get-started/locally/A
 
-   https://machinelearningprojects.net/build-opencv-with-cuda-and-cudnn/
-5. Install package:
+4. Install package:
    ```bash
    python setup.py install
    ``` 
