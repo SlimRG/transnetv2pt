@@ -66,11 +66,12 @@ print(scenes)
 
 ```python
 from pathlib import Path
-from transnetv2pt import predict_video
+from transnetv2pt import init_model, predict_video
 import cv2
 
 video_path = Path("video.mkv")
-scenes = predict_video(str(video_path), show_progressbar=True)
+model = init_model(torch.device('cuda'))
+scenes = predict_video(str(video_path), model, show_progressbar=True)
 
 cap = cv2.VideoCapture(str(video_path))
 for i, (start, end) in enumerate(scenes):
