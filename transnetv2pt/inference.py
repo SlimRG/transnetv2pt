@@ -60,7 +60,7 @@ def extract_frames_with_opencv(
             stream.thread_type = "AUTO" 
             
             # Informing
-            total_frames = stream.frames if stream.frames and stream.frames > 0 else None
+            total_frames = stream.frames if stream.frames and stream.frames > 0 else 0
             progress_bar = tqdm(total=total_frames, desc="Extracting frames", unit="frame") if show_progressbar else None 
             
             # Decode frames
