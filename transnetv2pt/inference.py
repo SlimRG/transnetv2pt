@@ -8,7 +8,7 @@ from .transnetv2_pytorch import TransNetV2
 
 def init_model(device: torch.device | None = None):
     # Init logger
-    logger = logging.getLOGGER(__name__)
+    logger = logging.getLogger(__name__)
     
     # Set device
     if (device is None) and torch.cuda.is_available():
