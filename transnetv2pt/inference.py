@@ -26,7 +26,7 @@ def init_model(device: torch.device | None = None):
     model.to(device)
      
     # If CUDA - optimize
-    if device == 'cuda':
+    if device.type == "cuda":
         model = torch.compile(model, mode="reduce-overhead")   
                
     # Return model
@@ -61,11 +61,7 @@ def extract_frames_with_opencv(
             
             # Informing
             total_frames = stream.frames if stream.frames and stream.frames > 0 else None
-            progress_bar = (
-                tqdm(total=total_frames, desc="Extracting frames", unit="frame")
-                if show_progressbar
-                else None
-            )   
+            progress_bar = tqdm(total=total_frames, desc="Extracting frames", unit="frame") if show_progressbar else None 
             
             # Decode frames
             for frame in container.decode(video=0):
