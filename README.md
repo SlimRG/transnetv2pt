@@ -51,11 +51,12 @@ This repository is a fork of [soCzech/TransNetV2](https://github.com/soCzech/Tra
 ## Usage
 
 ```python
-from transnetv2pt import predict_video
+from transnetv2pt import predict_video, init_model
 
 # Detect scenes in a video file
 target = "path/to/video.mp4"
-scenes = predict_video(str(target), device='cuda', show_progressbar=True)
+model = init_model(torch.device('cuda'))
+scenes = predict_video(str(target), model, show_progressbar=True)
 print(scenes)
 ```
 
@@ -68,8 +69,8 @@ from pathlib import Path
 from transnetv2pt import init_model, predict_video
 import cv2
 
-video_path = Path("video.mkv")
 model = init_model(torch.device('cuda'))
+video_path = Path("video.mkv")
 scenes = predict_video(str(video_path), model, show_progressbar=True)
 
 cap = cv2.VideoCapture(str(video_path))
