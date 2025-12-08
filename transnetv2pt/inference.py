@@ -60,6 +60,7 @@ def extract_frames_with_opencv(
             stream.thread_type = "AUTO" 
             
             # Make decoder
+            total_frames = stream.frames or None
             it = container.decode(video=0)
             
             # Informing
