@@ -85,7 +85,7 @@ def extract_frames_with_opencv(
             if progress_bar:
                 progress_bar.close()
          
-    except av.AVError as e:
+    except (av.FFmpegError, OSError, ValueError) as e:
         logger.error(f"Failed to open/decode video: {video_path}. PyAV error: {e}")
         raise
     
