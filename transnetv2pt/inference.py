@@ -59,12 +59,15 @@ def extract_frames_with_opencv(
             stream = container.streams.video[0]
             stream.thread_type = "AUTO" 
             
-            # Informing
-            total_frames = stream.frames if stream.frames and stream.frames > 0 else 0
-            progress_bar = tqdm(total=total_frames, desc="Extracting frames", unit="frame") if show_progressbar else None 
+            # Make decoder
+            it = container.decode(video=0)
             
-            # Decode frames
-            for frame in container.decode(video=0):
+            # Informing
+            if show_progressbar:
+                it = tqdm(it, total=total_frames, desc="Extracting frames", unit="frame")
+            
+            # Decode frames 
+            for frame in it:
                 # Resize + rgb24
                 frame = frame.reformat(
                     width=target_width,
@@ -74,12 +77,6 @@ def extract_frames_with_opencv(
 
                 arr = frame.to_ndarray()
                 frames.append(arr)
-
-                if progress_bar:
-                    progress_bar.update(1)
-
-            if progress_bar:
-                progress_bar.close()
          
     except (av.FFmpegError, OSError, ValueError) as e:
         logger.error(f"Failed to open/decode video: {video_path}. PyAV error: {e}")
