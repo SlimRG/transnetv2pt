@@ -36,7 +36,7 @@ def init_model(device: torch.device | None = None):
         "DEVICE": device,
     }
         
-def extract_frames_with_opencv(
+def extract_frames(
         video_path: str,
         logger,
         target_height: int = 27,
@@ -154,7 +154,7 @@ def predict_video(video_path: str, model_container, show_progressbar: bool = Fal
     device = model_container["DEVICE"]
     
     # Extract frames
-    frames = extract_frames_with_opencv(video_path, logger, show_progressbar=show_progressbar)
+    frames = extract_frames(video_path, logger, show_progressbar=show_progressbar)
     
     # Predict
     _, single_frame_pred = predict_raw(model, frames, device=device)
