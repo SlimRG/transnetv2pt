@@ -13,7 +13,7 @@ def init_model(device: torch.device | None = None):
     # Set device
     if (device is None) and torch.cuda.is_available():
         device = torch.device('cuda')
-    else:
+    elif (device is None):
         device = torch.device('cpu')
     
     # Init model
