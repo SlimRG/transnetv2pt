@@ -27,7 +27,8 @@ def init_model(device: torch.device | None = None):
      
     # If CUDA - optimize
     if device.type == "cuda":
-        model = torch.compile(model, mode="reduce-overhead")   
+        torch.set_float32_matmul_precision("high")
+        model = torch.compile(model, mode="max-autotune-no-cudagraphs")   
                
     # Return model
     return {
