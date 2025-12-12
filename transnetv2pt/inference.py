@@ -1,166 +1,83 @@
 import os
-import av
-import torch
-import numpy as np
 import logging
-from tqdm import tqdm
+import torch
+# Import TransNetV2 model class from the same package
 from .transnetv2_pytorch import TransNetV2
 
-def init_model(device: torch.device | None = None):
-    # Init logger
-    logger = logging.getLogger(__name__)
-    
-    # Set device
-    if (device is None) and torch.cuda.is_available():
-        device = torch.device('cuda')
-    elif (device is None):
-        device = torch.device('cpu')
-    
-    # Init model
-    model = TransNetV2()
-    state_dict = torch.load(
-        f"{os.path.dirname(os.path.abspath(__file__))}/transnetv2-pytorch-weights.pth"
-    )
-    model.load_state_dict(state_dict)
-    model.eval()
-    model.to(device)
-     
-    # If CUDA - optimize
-    if device.type == "cuda":
-        torch.set_float32_matmul_precision("high")
-        model = torch.compile(model, mode="max-autotune-no-cudagraphs")   
-               
-    # Return model
-    return {
-        "LOGGER": logger,
-        "MODEL": model,
-        "DEVICE": device,
-    }
-        
-def extract_frames(
-        video_path: str,
-        logger,
-        target_height: int = 27,
-        target_width: int = 48,
-        show_progressbar: bool = False
-):
+# Import backend classes for decoding and inference
+from . import backend_pyav
+from . import backend_nvvc
+
+class SceneDetector:
     """
-    Extracts frames from a video with progress tracking.
+    SceneDetector is an interface for detecting scene boundaries in videos using the TransNetV2 model.
+    It automatically selects between an NVIDIA GPU-accelerated decoding backend (if available) or a CPU-based PyAV backend.
     """
-    logger.info(f"Opening video: {video_path}") 
-    frames = []
-    try:
-        # Try to open video
-        with av.open(video_path) as container:
-            # If can not open
-            if not container.streams.video:
-                raise ValueError(f"No video stream found: {video_path}")
-            
-            # Make stream
-            stream = container.streams.video[0]
-            stream.thread_type = "AUTO" 
-            
-            # Make decoder
-            total_frames = stream.frames or None
-            it = container.decode(video=0)
-            
-            # Informing
-            if show_progressbar:
-                it = tqdm(it, total=total_frames, desc="Extracting frames", unit="frame")
-            
-            # Decode frames 
-            for frame in it:
-                # Resize + rgb24
-                frame = frame.reformat(
-                    width=target_width,
-                    height=target_height,
-                    format="rgb24",
-                )
+    def __init__(self, device: torch.device | None = None):
+        """
+        Initialize the SceneDetector.
+        If device is not provided, use CUDA if available, otherwise CPU.
+        The TransNetV2 model will be loaded on the specified device upon first use.
+        """
+        # Determine device (CUDA or CPU)
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        self.model = None
+        # Set up a logger for this class
+        self.logger = logging.getLogger(__name__)
 
-                arr = frame.to_ndarray()
-                frames.append(arr)
-         
-    except (av.FFmpegError, OSError, ValueError) as e:
-        logger.error(f"Failed to open/decode video: {video_path}. PyAV error: {e}")
-        raise
-    
-    logger.info(f"Extracted {len(frames)} frames")
-    return np.asarray(frames, dtype=np.uint8)    
+    def _init_model(self):
+        """
+        Load the TransNetV2 model and weights onto the specified device.
+        Uses torch.compile for optimization if running on CUDA.
+        """
+        model = TransNetV2()
+        # Load model weights from the package directory
+        state_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transnetv2-pytorch-weights.pth")
+        state_dict = torch.load(state_path, map_location="cpu")
+        model.load_state_dict(state_dict)
+        model.eval()
+        model.to(self.device)
+        # Optimize model execution on CUDA
+        if self.device.type == "cuda":
+            torch.set_float32_matmul_precision("high")
+            model = torch.compile(model, mode="max-autotune-no-cudagraphs")
+        return model
 
-def input_iterator(frames):
-    """
-    Generator that yields batches of 100 frames, with padding at the beginning and end.
-    """
-    no_padded_frames_start = 25
-    no_padded_frames_end = 25 + 50 - (len(frames) % 50 if len(frames) % 50 != 0 else 50)
+    def predict(self, video_path: str, show_progressbar: bool = False):
+        """
+        Detect scene boundaries in the given video file.
 
-    start_frame = np.expand_dims(frames[0], 0)
-    end_frame = np.expand_dims(frames[-1], 0)
-    padded_inputs = np.concatenate(
-        [start_frame] * no_padded_frames_start +
-        [frames] +
-        [end_frame] * no_padded_frames_end, 0
-    )
+        Parameters:
+            video_path (str): Path to the video file to process.
+            show_progressbar (bool): If True, display a progress bar during processing.
 
-    ptr = 0
-    while ptr + 100 <= len(padded_inputs):
-        out = padded_inputs[ptr:ptr + 100]
-        ptr += 50
-        yield out[np.newaxis]
+        Returns:
+            scenes (np.ndarray): An array of [start_frame, end_frame] pairs for each detected scene.
+        """
+        # Initialize the model on first use
+        if self.model is None:
+            self.model = self._init_model()
+            self.logger.info(f"Initialized TransNetV2 model on {self.device.type.upper()} device")
 
-def predictions_to_scenes(predictions: np.ndarray, threshold: float = 0.5):
-    """
-    Converts model predictions to scene boundaries based on a threshold.
-    """
-    predictions = (predictions > threshold).astype(np.uint8)
+        # If device is CPU or CUDA is not available, use PyAV backend directly
+        if self.device.type != "cuda":
+            self.logger.debug("Using PyAV backend (CPU decoding)")
+            backend = backend_pyav.PyAVBackend()
+            scenes = backend.predict_video(video_path, self.model, device=self.device, show_progressbar=show_progressbar)
+            return scenes
 
-    scenes = []
-    t, t_prev, start = -1, 0, 0
-    for i, t in enumerate(predictions):
-        if t_prev == 1 and t == 0:
-            start = i
-        if t_prev == 0 and t == 1 and i != 0:
-            scenes.append([start, i])
-        t_prev = t
-    if t == 0:
-        scenes.append([start, i])
-
-    if len(scenes) == 0:
-        return np.array([[0, len(predictions) - 1]], dtype=np.int32)
-
-    return np.array(scenes, dtype=np.int32)
-
-def predict_raw(model, video, device):
-    """
-    Performs inference on the video using the TransNetV2 MODEL.
-    """  
-    with torch.inference_mode():
-        predictions = []
-        for inp in input_iterator(video):
-            video_tensor = torch.from_numpy(inp).to(device)
-            single_frame_pred, all_frame_pred = model(video_tensor)
-            single_frame_pred = torch.sigmoid(single_frame_pred).cpu().numpy()
-            all_frame_pred = torch.sigmoid(all_frame_pred["many_hot"]).cpu().numpy()
-            predictions.append((single_frame_pred[0, 25:75, 0], all_frame_pred[0, 25:75, 0]))
-        single_frame_pred = np.concatenate([single_ for single_, _ in predictions])
-        return video.shape[0], single_frame_pred
-
-def predict_video(video_path: str, model_container, show_progressbar: bool = False):
-    """
-    Detects shot boundaries in a video file using the TransNetV2 MODEL.
-    """
-    # Get settings
-    logger = model_container["LOGGER"]
-    model = model_container["MODEL"]
-    device = model_container["DEVICE"]
-    
-    # Extract frames
-    frames = extract_frames(video_path, logger, show_progressbar=show_progressbar)
-    
-    # Predict
-    _, single_frame_pred = predict_raw(model, frames, device=device)
-    
-    # Get scenes
-    scenes = predictions_to_scenes(single_frame_pred)
-    logger.info(f"Detected {len(scenes)} scenes")
-    return scenes
+        # If device is CUDA, attempt to use NVDEC backend for GPU decoding
+        try:
+            self.logger.debug("Attempting NVDEC backend (GPU decoding)")
+            backend = backend_nvvc.NVVCBackend()
+            scenes = backend.predict_video(video_path, self.model, device=self.device, show_progressbar=show_progressbar)
+            return scenes
+        except Exception as e:
+            # If any error occurs (e.g., NVDEC not available or decoding fails), fall back to PyAV
+            self.logger.warning(f"NVDEC backend failed (error: {e}). Falling back to PyAV backend.")
+            backend = backend_pyav.PyAVBackend()
+            scenes = backend.predict_video(video_path, self.model, device=self.device, show_progressbar=show_progressbar)
+            return scenes
